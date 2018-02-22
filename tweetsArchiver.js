@@ -9,18 +9,39 @@ var generateMd5 = require('./classes/GenerateMD5');
 var rimraf = require('rimraf');
 
 // consts
-var VERSION = 0.1;
+var VERSION = 1.1;
 var ENV = process.env.NODE_ENV || 'development';
 var TWEETS_PATH = config.paths.tweets;
 var ARCHVIES_PATH = config.paths.archives;
 var ARCHIVE_MODE = config.archiveMode; // flag for archiving a day folder to the archives path
 var DELETE_ARCHIVE_SOURCE_DIR = config.archiveDeleteSrcDir; // if true will delete the original folder after archiving
+var FILTER_STREAM = config.filter.enable; // if true will connec to filter stream rather then sample stream
 
 // helper functions
 function getRandomArbitrary(min, max) {
     return parseInt(Math.random() * (max - min) + min, 10);
 }
 
+function loadFilterStreamOptions() {
+    var optionsList = ['track', 'follow'];
+    var returnOptions = {};
+
+    optionsList.forEach(function(option) {
+        if (config.filter[option]) {
+            if (typeof config.filter[option]  === 'string') {
+                // load the json file
+                returnOptions[option] = require('./' + config.filter[option]);
+            } else if (Array.isArray(config.filter.track)) {
+                // array list
+                returnOptions[option] = config.filter[option];
+            };
+        }
+
+    });
+    return returnOptions;
+}
+
+var logger = loggerFunc(config.paths.logs, config.streamLogsPrefix);
 // Twit Lib init
 var T = new Twit({
     consumer_key: config.twitterAPI.consumerKey,
@@ -30,11 +51,20 @@ var T = new Twit({
     timeout_ms: config.twitterAPI.timeoutMs
 });
 
-//var stream = T.stream('statuses/filter', { track: 'mango' }) // Do this in the future release
-var stream = T.stream('statuses/sample');
-var logger = loggerFunc(config.paths.logs, config.streamLogsPrefix);
+if (FILTER_STREAM) {
+    try {
+        var filterOptions = loadFilterStreamOptions();
+    } catch(e) {
+        console.log('Error caused by invalid configuration', e);
+        process.exit(1);
+    }
+    var stream = T.stream('statuses/filter', filterOptions);
+} else {
+    var stream = T.stream('statuses/sample');
+}
 
-logger.verbose('Init Tweets Archiver v' + VERSION + ' ENV: ' + ENV);
+logger.info('Init Tweets Archiver v' + VERSION + ' ENV: ' + ENV);
+logger.info('Mode: ' + (FILTER_STREAM ? 'Filter (statuses/filter)' : 'Sample(statuses/sample)'));
 var minuteTweetsArray = [];
 var bufferStartMinuteTimestamp = moment();
 var programStartTimestamp = moment();
@@ -48,7 +78,7 @@ var writeTwitterArrayToZipFile = function (tweets, fileTimestamp) {
     var monthPath = fileTimestamp.format("DD-MM-YYYY");
     var hourPath = fileTimestamp.format("HH");
     var fileHHmm = fileTimestamp.format("HH-mm");
-    var postFixFileName = fileHHmm + '_' + Date.now() + '_' + getRandomArbitrary(100, 1000000) + '_' + tweets.length;
+    var postFixFileName = fileHHmm + '-' + Date.now() + '-' + getRandomArbitrary(100, 1000000) + '-' + tweets.length;
     var zipFileName = postFixFileName + '.zip';
     var insideZipFileName = postFixFileName + '.json';
     var zipPath = path.join(TWEETS_PATH, monthPath, hourPath);

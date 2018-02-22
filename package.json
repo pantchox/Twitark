@@ -1,6 +1,6 @@
 {
   "name": "twitark",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Archive the Twitter sample firehose and daily trends",
   "main": "index.js",
   "scripts": {

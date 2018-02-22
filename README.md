@@ -179,7 +179,7 @@ I have also added 60GB external hard drive for having the machine enough space t
 ## Twitter terms of service regarding public data sets
 Twitter API's [Terms Of Service](https://dev.twitter.com/overview/terms/policy#6._Be_a_Good_Partner_to_Twitter) discourages  users from creating large amounts of raw Twitter data to be available online for download due to variety of reasons such as privacy of their users. The data may be used for research but not shared.
 Twitter do allow you to share your data sets of available tweets if you filter out the raw data from specific properties such as users id (refer to their guidelines in the provided link).  
-You **MAY NOT** take this as a recommndation or a rule of thumb when creating your archives / data sets and i hold no liablity for any issue you may encounter.  
+You **MAY NOT** take this as a recommendation or a rule of thumb when creating your archives / data sets and i hold no liablity for any issue you may encounter.  
 For further information read Twitter TOS here - https://dev.twitter.com/overview/terms/policy#6._Be_a_Good_Partner_to_Twitter.
 
 ## License
