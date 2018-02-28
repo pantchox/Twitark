@@ -41,6 +41,22 @@ function loadFilterStreamOptions() {
     return returnOptions;
 }
 
+function loadAdapters(logger) {
+    var adapters = [];
+    if (config.adapters && Array.isArray(config.adapters)) {
+        config.adapters.forEach(function(adapter) {
+            var loadedAdapter = require('./adapters/' + adapter)(logger);
+            adapters.push(loadedAdapter);
+        });
+    }
+
+    if (adapters.length > 0) {
+        return adapters;
+    }
+
+    return null;
+}
+
 var logger = loggerFunc(config.paths.logs, config.streamLogsPrefix);
 // Twit Lib init
 var T = new Twit({
@@ -54,8 +70,11 @@ var T = new Twit({
 if (FILTER_STREAM) {
     try {
         var filterOptions = loadFilterStreamOptions();
+        if (Object.keys(filterOptions).length === 0) {
+            throw new Error('Filter mode is enabled but invalid configuration');
+        }
     } catch(e) {
-        console.log('Error caused by invalid configuration', e);
+        console.log('Error caused by invalid configuration:', e);
         process.exit(1);
     }
     var stream = T.stream('statuses/filter', filterOptions);
@@ -65,6 +84,7 @@ if (FILTER_STREAM) {
 
 logger.info('Init Tweets Archiver v' + VERSION + ' ENV: ' + ENV);
 logger.info('Mode: ' + (FILTER_STREAM ? 'Filter (statuses/filter)' : 'Sample(statuses/sample)'));
+var adapters = loadAdapters(logger);
 var minuteTweetsArray = [];
 var bufferStartMinuteTimestamp = moment();
 var programStartTimestamp = moment();
@@ -174,8 +194,14 @@ stream.on('tweet', function (tweet) {
     } else {
         // add tweet to tweets array
         minuteTweetsArray.push(tweet);
+        // call adapters
+        if (adapters) {
+            adapters.forEach(function(adapter) {
+                adapter.push(tweet);
+            });
+        }
         //console.log(tweet.text);
-        process.stdout.write(".");
+        //process.stdout.write(".");
     }
 });
 
