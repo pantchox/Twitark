@@ -2,6 +2,7 @@ var fs = require('fs');
 var util = require('util');
 var _ = require('lodash');
 
+var VERSION = 1.1;
 function checkConfigPaths(paths) {
     paths = paths || ['error in loading config file'];
     var errors = [];
@@ -27,5 +28,6 @@ if (configPathsErrors.length > 0) {
     console.log(configPathsErrors.join('\n'));
     process.exit(1);
 }
+configData.version = VERSION;
 
 module.exports = configData;

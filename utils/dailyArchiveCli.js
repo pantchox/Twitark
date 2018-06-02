@@ -1,13 +1,17 @@
 var fs = require('fs');
 var path = require('path');
-var config = require('../config');
 var zipper = require('../classes/Zipper');
 var generateMd5 = require('../classes/GenerateMD5');
 var async = require('async');
 var moment = require('moment');
 
+if (process.cwd().split(path.sep).pop() === 'utils') {
+    process.chdir('../');
+}
+var config = require('../config');
+
 // consts
-var VERSION = 0.1;
+var VERSION = config.version;
 var ENV = process.env.NODE_ENV || 'development';
 var TWEETS_PATH = config.paths.tweets;
 var TRENDS_PATH = config.paths.trends;
@@ -65,7 +69,7 @@ var writeArchiveZipFile = function (pathName, type, skipExisted, callback) {
     });
 }
 
-console.log('Twit-Ark CLI Util v' + VERSION);
+console.log('TwitArk CLI Util v' + VERSION);
 console.log(`Current ENV: ${ENV}`);
 console.log(`Current Tweets Path: ${TWEETS_PATH}`);
 console.log(`Current Trends Path: ${TRENDS_PATH}`);
@@ -97,10 +101,12 @@ if (actionType === 'tweets') {
         }
     }
 } else {
-    errors.push('Usage archiving tweets path: node dailyArchiveCli.js tweets 17-01-2017');
-    errors.push('Usage archiving multiple tweets paths: node dailyArchiveCli.js tweets 17-01-2017 20-01-2017');
-    errors.push('Usage archiving all trends: node dailyArchiveCli.js trends');
-    errors.push('Usage archiving trends path: node dailyArchiveCli.js trends 17-01-2017');
+    errors.push('Usage Examples:');
+    errors.push('Archiving tweets path: node dailyArchiveCli.js tweets 17-01-2017');
+    errors.push('Archiving tweets multiple paths: node dailyArchiveCli.js tweets 17-01-2017 20-01-2017');
+    errors.push('Archiving all trends: node dailyArchiveCli.js trends');
+    errors.push('Archiving trends path: node dailyArchiveCli.js trends 17-01-2017');
+    errors.push('');
 }
 
 if (errors.length === 0) {

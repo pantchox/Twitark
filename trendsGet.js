@@ -9,9 +9,8 @@ var Jobber = require('./classes/Jobber');
 var loggerFunc = require('./classes/Logger');
 var countriesIds = require('./includes/countriesIds');
 
-
 // consts
-var VERSION = 0.1;
+var VERSION = config.version;
 var ENV = process.env.NODE_ENV || 'development';
 var TRENDS_PATH = config.paths.trends;
 
@@ -27,8 +26,10 @@ var twitterRateLimitCalcDelay = function(twitterHeaderDate, twitterHeaderRateRes
     return (+twitterHeaderRateResetDate - twitterDate.unix() + dateDiff);
 };
 
-
-// Config
+// init logging instance
+var logger = loggerFunc(config.paths.logs, config.trendsLogsPrefix);
+logger.info('Init TwitArk Trends Get v' + VERSION + ' ENV: ' + ENV);
+// init Twit Lib
 var T = new Twit({
     consumer_key: config.twitterAPI.consumerKey,
     consumer_secret: config.twitterAPI.consumerSecret,
@@ -36,9 +37,7 @@ var T = new Twit({
     access_token_secret: config.twitterAPI.accessTokenSecret,
     timeout_ms: config.twitterAPI.timeoutMs
 });
-
-var logger = loggerFunc(config.paths.logs, config.trendsLogsPrefix);
-logger.verbose('Init Trends Get v' + VERSION + ' ENV: ' + ENV);
+// init jobs manager
 var myJobs = new Jobber(countriesIds);
 
 myJobs.on('err', function (error) {

@@ -1,0 +1,17 @@
+{
+  "name": "sqlite",
+  "version": "1.0.0",
+  "description": "",
+  "main": "sqlite.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "async": "^2.6.0",
+    "knex": "^0.10.0",
+    "sqlite3": "^4.0.0"
+  }
+}

@@ -25,9 +25,7 @@ function Logger(logPath, prefix, tsSuffix) {
                 colorize: true,
                 prepend: true,
                 json: false,
-                //level: env === 'development' ? 'verbose' : 'info'
                 level: 'info',
-                //humanReadableUnhandledException: true
             })
         ],
         exceptionHandlers: [

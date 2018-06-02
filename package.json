@@ -1,12 +1,12 @@
 {
   "name": "twitark",
-  "version": "1.0.1",
+  "version": "1.1",
   "description": "Archive the Twitter sample firehose and daily trends",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "arye shalev",
+  "author": "Arye Shalev",
   "license": "ISC",
   "dependencies": {
     "archiver": "^1.2.0",
