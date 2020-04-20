@@ -5,7 +5,7 @@ var _ = require('lodash');
 var filendir = require('filendir');
 var Twit = require('twit');
 var moment = require('moment');
-var Jobber = require('./classes/Jobber');
+var Joebear = require('joebear');
 var loggerFunc = require('./classes/Logger');
 var countriesIds = require('./includes/countriesIds');
 
@@ -37,11 +37,11 @@ var T = new Twit({
     access_token_secret: config.twitterAPI.accessTokenSecret,
     timeout_ms: config.twitterAPI.timeoutMs
 });
-// init jobs manager
-var myJobs = new Jobber(countriesIds);
+// init Joebear jobs manager
+var myJobs = new Joebear(countriesIds);
 
 myJobs.on('err', function (error) {
-    logger.error('Jobber Error', error);
+    logger.error('Joebear Error', error);
 });
 
 myJobs.on('run', function (currentJob, counter, orgJobs, message) {
@@ -88,7 +88,7 @@ myJobs.on('run', function (currentJob, counter, orgJobs, message) {
 
         if (rateLimitRemaining === "0") {
             if (counter > 0) {
-                logger.info('normal Rate limit exceeded, delaying in ', timeToResetInSeconds / 60, 'minutes and restarting jobber');
+                logger.info('normal Rate limit exceeded, delaying in ', timeToResetInSeconds / 60, 'minutes and restarting Joebear');
                 setTimeout(function () {
                     myJobs.restart();
                 }, timeToResetInSeconds * 1000);
