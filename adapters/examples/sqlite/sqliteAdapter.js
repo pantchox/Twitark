@@ -1,146 +1,186 @@
 
 /*
     TwitArk sqlite adapter example code
+    Note:Inserting will use transactions feature of Sqlite which is similar to do a batch insert which is faster
+    And can keep up with twitter
 */
-var util = require('util');
-var Adapter = require('../../Adapter'); // mandatory require
-var path = require('path');
-var async = require('async');
-var knexConfig = {
-    client: 'sqlite3',
-    debug: false,
-    useNullAsDefault: true,
-    connection: {filename: __dirname + '/twitter.db'}, multipleStatements: true
-}
+const Adapter = require('../../Adapter');
+const sqlite3 = require('sqlite3');
 
-function SqliteAdapter(logger) {
-    this._name = 'Sqlite Adapter';
-    Adapter.apply(this, arguments);
-}
+const INSERT_QUERY = 'INSERT INTO tweets(time, entity, entity_type, tweet, tweet_id, tweet_time, tweet_lang, retweet, user_id, user_name, user_lang) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)';
 
-// Extend the base adapter
-util.inherits(SqliteAdapter, Adapter);
-
-SqliteAdapter.prototype.init = function(cb) {
-    this.chunk = [];
-    this.chunkLimit = 50;
-    var knex = require('knex')(knexConfig);
-    this._client = knex;
-    // call base init
-    SqliteAdapter.super_.prototype.init.call(this, cb);
-}
-
-SqliteAdapter.prototype.iterateEntity = function(entityList, tweet, tweet_text, suffix, key = 'text', callback) {
-    var entityListStructured = entityList.map(function(entity, idx) {
-        return {
-            entity: suffix + entity[key],
-            tweet: tweet_text,
-            tweet_id: tweet.id_str,
-            tweet_time: tweet.timestamp_ms,
-            retweet: tweet.retweeted_status ? true : false,
-            tweet_lang: tweet.lang,
-            user_id: tweet.user.id_str,
-            user_name: tweet.user.name,
-            user_lang: tweet.user.lang
-        };
-    });
-    return entityListStructured;
-}
-
-SqliteAdapter.prototype.push = function(tweet, pushBulk_cb, isLast) {
-    var self = this;
-    self.setBusy(true); // async processing in progress
-    var text = tweet.text;
-    var entities = tweet.entities;
-    // checking if tweet is truncated then get the full tweet data
-    if (tweet.extended_tweet) {
-        text = tweet.extended_tweet.full_text;
-        entities = tweet.extended_tweet.extended_entities;
+class SqliteAdapter extends Adapter {
+    constructor(logger) {
+        super(logger, 'Sqlite Adapter');
     }
 
-    var tweetEntitiesData = [];
-    // insert hashtags
-    if (entities && entities.hashtags && entities.hashtags.length > 0) {
-        tweetEntitiesData = tweetEntitiesData.concat(self.iterateEntity(entities.hashtags, tweet, text, '#', 'text'));
-    } 
-    // insert mentions
-    if (entities && entities.user_mentions && entities.user_mentions.length > 0) {
-        tweetEntitiesData = tweetEntitiesData.concat(self.iterateEntity(entities.user_mentions, tweet, text, '@', 'screen_name'));
-    }
-    // insert symbols
-    if (entities && entities.symbols && entities.symbols.length > 0) {
-        tweetEntitiesData = tweetEntitiesData.concat(self.iterateEntity(entities.symbols, tweet, text, '$', text));
-    }
-    // insert urls
-    if (entities && entities.urls && entities.urls.length > 0) {
-        tweetEntitiesData = tweetEntitiesData.concat(self.iterateEntity(entities.urls, tweet, text, '*', 'expanded_url'));
+    init(callback) {
+        const self = this;
+        // Bulk insert transction chunks, from archive reader
+        self._chunk = [];
+        self._chunkMaxSize = 1000;
+        self._totalTweets = 0;
+        self._totalEntities = 0;
+        
+        // Init and Connect database
+        self._db = new sqlite3.Database(
+            __dirname + '/twitter.db',
+            sqlite3.OPEN_READWRITE,
+            (err) => {
+                if (err) {
+                    self.error('Sqlite database adapter could not connect!');
+                } else {
+                    self.log('Sqlite database connected!');
+                    self._db.configure('busyTimeout', 10000); 
+                }
+                return callback(err);
+            }
+        );
     }
 
-    if (pushBulk_cb) {
-        // bulk insert received from archive reader
-        // here we check the chunk buffer passed its capcity so we bulk push it to the DB
-        self.chunk = self.chunk.concat(tweetEntitiesData);
-        if (self.chunk.length > self.chunkLimit || (self.chunk.length > 0 && isLast)) {
-            self._client.batchInsert('tweets', self.chunk, self.chunk.length)
-            .then(function(ids) {
-                self.log('Chunk Push (' + self.chunk.length + ')');
-                // clear chunk buffer
-                self.chunk = [];
-                self.setBusy(false);
-                pushBulk_cb();
-            })
-            .catch(function(e){
-                self.error('Insert error: ' + e.message);
-            });
-        } else {
-            self.setBusy(false);
-            pushBulk_cb();
-        }
-    } else {
-        // normal push received from twitter archiver
-        if (tweetEntitiesData.length > 0) {
-            var tweetEntitiesDataList = tweetEntitiesData.map(function(te) {return te.entity;});
-            self._client.batchInsert('tweets', tweetEntitiesData, tweetEntitiesData.length)
-            .then(function(ids) {
-                self.log('Insert success: ' + tweetEntitiesDataList.join(', '));
-                self.setBusy(false);
-            })
-            .catch(function(e){
-                self.error('Insert error: ' + e.message);
-            });
-        }
-    }
-}
+    insertEntity(entityList, tweet, tweet_text, entity_type, key = 'text') {
+        const self = this;
+        entityList.forEach(entity => {
+            const values = [
+                tweet.created_at, // tweet time creation
+                entity[key], // entity name
+                entity_type, // hashtag/mention/link/symbol
+                tweet_text, // tweet content
+                tweet.id_str, // tweet id
+                tweet.timestamp_ms, // tweet time
+                tweet.lang, // tweet language
+                tweet.retweeted_status ? true : false, // is retweet
+                tweet.user.id_str, // tweet user id
+                tweet.user.name, // tweet user name
+                tweet.user.lang || 'und' // tweet user language
+            ];
 
-SqliteAdapter.prototype.pushBulk = function(meta, reader_cb) {
-    // method used by archive reader
-    // each bulk push is a full minute tweets
-    var self = this;
-    async.eachOfSeries(meta.data, function(tweet, idx, async_cb) {
-        self.push(tweet, async_cb, idx + 1 === meta.data.length);
-    }, function(err) {
-        if (err) {
-            self.error('Push bulk error: ' + err);
-        } else {
-            self.log('Push bulk success [' + meta.fileName + '][' + meta.date + ']');
-        }
-        reader_cb();
-    });
-}
-
-SqliteAdapter.prototype.teardown = function(cb) {
-    // note you must call cb() in this part before calling the base teardown
-    var self = this;
-    var closeDB = function() {
-        cb();
-        self._client.destroy(function(){
-            self.log('Sqlite knex client closed');
-            // cb(); // bug in knex
+            // Inserting to our transaction prepared statement handler
+            self._dbTransaction.run(values);
         });
     }
 
-    // call base teardown (handle async gracefull shutdown of adapter)
-    SqliteAdapter.super_.prototype.teardown.call(this, closeDB);
+    processTweet(tweet) {
+        const self = this;
+        let text = tweet.text;
+        let entities = tweet.entities;
+        
+        // checking if tweet is truncated then get the full tweet data
+        if (tweet.extended_tweet) {
+            text = tweet.extended_tweet.full_text;
+            entities = tweet.extended_tweet.entities;
+        }
+
+        var numEntities = 0;
+        // insert hashtags
+        if (entities && entities.hashtags && entities.hashtags.length > 0) {
+            self.insertEntity(entities.hashtags, tweet, text, 'hashtag');
+            numEntities += entities.hashtags.length;
+        } 
+        // insert mentions
+        if (entities && entities.user_mentions && entities.user_mentions.length > 0) {
+            self.insertEntity(entities.user_mentions, tweet, text, 'mention', 'screen_name');
+            numEntities += entities.user_mentions.length;
+        }
+        // insert symbols
+        if (entities && entities.symbols && entities.symbols.length > 0) {
+            self.insertEntity(entities.symbols, tweet, text, 'symbol');
+            numEntities += entities.symbols.length;
+        }
+        // insert links
+        if (entities && entities.urls && entities.urls.length > 0) {
+            self.insertEntity(entities.urls, tweet, text, 'link', 'expanded_url');
+            numEntities += entities.urls.length;
+        }
+
+        if (numEntities > 0) {
+            // self.log(`Tweet  #${tweet.id_str} added with ${numEntities} entities`);
+            self._totalEntities += numEntities;
+        }
+    }
+
+    runTransaction(pushBulkCallback) {
+        const self = this;
+        // Start a transaction dump of tweets inserts
+        self.setBusy(true); // important if the process is stopped for teardown cleanup
+        self._db.serialize();
+        self._db.run('begin transaction');
+        
+        // Set a transaction prepared statement handler with our insert query template
+        self._dbTransaction = self._db.prepare(INSERT_QUERY);
+        
+        // Iterate the chunk and insert it to the database
+        for (const tweet of self._chunk) {
+            self.processTweet(tweet);
+        }
+
+        // Commit the transaction to save to database
+        self._db.run('commit');
+        
+        // Set our chunk to new empty array for the next transaction dump
+        const chunkLength = self._chunk.length;
+        self._totalTweets += chunkLength;
+        self._chunk = [];
+        self._dbTransaction.finalize(() => {
+            // Transaction finished and if we are called by archive reader call the callback
+            self.setBusy(false);
+            self.log(`Inserted [${chunkLength}] tweets`)
+            if (pushBulkCallback) {
+                pushBulkCallback()
+            }
+        });
+    }
+
+    push(tweet) {
+        const self = this;
+        // Adding tweets to our chunk until threshold size is met
+        if (self._chunk.length < self._chunkMaxSize) {
+            self._chunk.push(tweet);
+            return;
+        }
+
+        // We have met our threshold, write tweets to DB
+        this.runTransaction();
+    }
+
+    pushBulk(meta, readerCallback) {
+        /*
+            method used by archive reader
+            each bulk push is a full minute tweets
+        */
+        // here we will just set the chunk to a whole minute tweets (ignoring the original threshold)
+        // then when the transaction finished we run the archive reader callback
+        const self = this;
+        self._chunk = meta.data;
+        self.runTransaction(readerCallback);
+    }
+
+    teardown(callback) {
+        const self = this;
+        self.log('Stopping!')
+        // create a teardown function to be passed to super
+        const lastTransactionAndClose = () => {
+            const closeDB = () => setTimeout(() => {
+                    self._db.close(err => {
+                        self.log(`Processed [${self._totalTweets}] tweets with total of [${self._totalEntities}] entities`);
+                        err ? 
+                            self.error('Sqlite close connection failed! -' + err) :
+                            self.log('Sqlite client closed');
+                        callback(err);
+                    });
+            }, 0);
+
+            // Last chunk leftovers if exists insert to DB before closing
+            if (self._chunk.length > 0) {
+                return self.runTransaction(closeDB);
+            }
+            // no more data
+            closeDB();
+        };
+
+        // call base teardown (handle async gracefull shutdown of adapter)
+        super.teardown(lastTransactionAndClose);
+    }
 }
 
 module.exports = function(logger) {
