@@ -1,6 +1,5 @@
 var config = require('./config');
 var Twit = require('twit')
-var fs = require('fs');
 var path = require('path');
 var async = require('async');
 var moment = require('moment');
@@ -14,6 +13,7 @@ var VERSION = config.version;
 var ENV = process.env.NODE_ENV || 'development';
 var TWEETS_PATH = config.paths.tweets;
 var ARCHVIES_PATH = config.paths.archives;
+var LIVE_MODE = config.liveMode || false; // flag for not saving ANY data, usefull for real time with adapters, default should be false
 var ARCHIVE_MODE = config.archiveMode; // flag for archiving a day folder to the archives path
 var DELETE_ARCHIVE_SOURCE_DIR = config.archiveDeleteSrcDir; // if true will delete the original folder after archiving
 var FILTER_STREAM = config.filter.enable; // if true will connect to filter stream rather then sample stream
@@ -25,7 +25,7 @@ function getRandomArbitrary(min, max) {
 
 function loadFilterStreamOptions() {
     var optionsList = ['track', 'follow'];
-    var returnOptions = {};
+    var returnOptions = {twit_options: {retry: true}};
 
     optionsList.forEach(function(option) {
         if (config.filter[option]) {
@@ -86,8 +86,8 @@ function loadAdapters(logger, main) {
 var writeTwitterArrayToZipFile = function (tweets, fileTimestamp, cb) {
     // cb param is for gracefull exit
     // Archive consumed whole minutes tweets
-    if (tweets.length === 0) {
-        logger.info('No tweets, no file to save');
+    if (tweets.length === 0 || LIVE_MODE) {
+        logger.info(`${LIVE_MODE ? 'Live mode' : 'No tweets'}, no file to save`);
         if (cb) {
             return cb();
         }
@@ -163,7 +163,11 @@ var writeDailyArchiveZipFile = function (dailyTimestamp) {
 // init logging instance
 var logger = loggerFunc(config.paths.logs, config.streamLogsPrefix);
 logger.info('Init TwitArk Archiver v' + VERSION + ' ENV: ' + ENV);
-logger.info('Mode: ' + (FILTER_STREAM ? 'Filter (statuses/filter)' : 'Sample (statuses/sample)'));
+logger.info('Stream Mode: ' + (FILTER_STREAM ? 'Filter (statuses/filter)' : 'Sample (statuses/sample)'));
+if (LIVE_MODE) {
+    logger.info('Live Mode - ON');
+}
+
 // init Twit Lib
 var T = new Twit({
     consumer_key: config.twitterAPI.consumerKey,
@@ -187,12 +191,24 @@ var main = function(adapters) {
         }
         var stream = T.stream('statuses/filter', filterOptions);
     } else {
-        var stream = T.stream('statuses/sample');
+        var stream = T.stream('statuses/sample', {twit_options: {retry: true}});
     }
     var minuteTweetsArray = [];
     var bufferStartMinuteTimestamp = moment();
-    var programStartTimestamp = moment();
+    // var programStartTimestamp = moment();
     var programCurrentTimestamp = moment();
+
+    var callAdapters = (tweet) => {
+        if (adapters) {
+            adapters.forEach(function(adapter) {
+                try {
+                    adapter.instance.push(tweet);
+                } catch (e) {
+                    logger.error('In adapter [' + adapter.name + '] - ' + e.message);
+                }
+            });
+        }
+    };
 
     stream.on('tweet', function (tweet) {
         // in case this is the first tweet
@@ -212,33 +228,31 @@ var main = function(adapters) {
             var fileTimestamp = bufferStartMinuteTimestamp.clone();
             bufferStartMinuteTimestamp = bufferCurrentMinuteTimeStamp;
 
-            // write minute archive file
-            writeTwitterArrayToZipFile(minuteTweetsArrayCopywrite, fileTimestamp);
-            if (ARCHIVE_MODE) {
-                var currentTimestamp = moment();
-                var dateDiff = currentTimestamp.startOf('day')
-                    .diff(programCurrentTimestamp.startOf('day'), 'days');
-                //var dateDiff = currentTimestamp.diff(programCurrentTimestamp, 'seconds');
-                //if (dateDiff > 120) {
-                if (dateDiff > 0) {
-                    logger.info('New daily tweets archive start');
-                    writeDailyArchiveZipFile(programCurrentTimestamp);
-                    programCurrentTimestamp = currentTimestamp.clone();
+            if (LIVE_MODE) {
+                // live mode we don't save ANY data, usefull for use with adapters for real time
+                logger.info(`Live Mode Pushed [${minuteTweetsArrayCopywrite.length}] Tweets`)
+                callAdapters(tweet);
+            } else {
+                // write minute archive file
+                writeTwitterArrayToZipFile(minuteTweetsArrayCopywrite, fileTimestamp);
+                if (ARCHIVE_MODE) {
+                    var currentTimestamp = moment();
+                    var dateDiff = currentTimestamp.startOf('day')
+                        .diff(programCurrentTimestamp.startOf('day'), 'days');
+                    //var dateDiff = currentTimestamp.diff(programCurrentTimestamp, 'seconds');
+                    //if (dateDiff > 120) {
+                    if (dateDiff > 0) {
+                        logger.info('New daily tweets archive start');
+                        writeDailyArchiveZipFile(programCurrentTimestamp);
+                        programCurrentTimestamp = currentTimestamp.clone();
+                    }
                 }
             }
         } else {
             // add tweet to tweets array
             minuteTweetsArray.push(tweet);
             // call adapters
-            if (adapters) {
-                adapters.forEach(function(adapter) {
-                    try {
-                        adapter.instance.push(tweet);
-                    } catch (e) {
-                        logger.error('In adapter [' + adapter.name + '] - ' + e.message);
-                    }
-                });
-            }
+            callAdapters(tweet);
             //console.log(tweet.text);
             //process.stdout.write(".");
         }
@@ -267,14 +281,23 @@ var main = function(adapters) {
 
     stream.on('parser-error', (err) => {
         // incase un-auth, happens when you change time for example
-        logger.error('Parser Error', err);
+        logger.error('Parser Error - ', err);
     });
 
     stream.on('error', (err) => {
-        logger.error('Stream Error', err);
+        logger.error('Stream Error - ', err);
+        if (err.statusCode && +err.statusCode === 401) {
+            logger.error('Could not Auth with Twitter! Check that your keys and tokens are valid')
+            // Trigger shutdown
+            cleanupBeforeExit();
+        }
     });
 
-    process.on("SIGINT", function () {
+    process.on('SIGINT', function () {
+        cleanupBeforeExit();
+    });
+
+    var cleanupBeforeExit = function() {
         logger.info('* stopping stream listen');
         stream.stop();
         // call teardown of adapters if exists
@@ -309,7 +332,7 @@ var main = function(adapters) {
                 process.exit(0);
             });
         }
-    });
+    }
 };
 
 var adapters = loadAdapters(logger, main);

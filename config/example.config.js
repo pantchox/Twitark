@@ -25,8 +25,9 @@ var config = {
         follow: 'config\\followIds.example.json',
     },
     adapters: [
-        'examples\\echo\\HashtagsAdapter'
+        // 'examples\\echo\\HashtagsAdapter'
     ],
+    liveMode: false, // live mode will skip ANY saving, good for real time with adapters
     archiveMode: false,
     archiveDeleteSrcDir: false,
     streamLogsPrefix: 'twitter-stream',
