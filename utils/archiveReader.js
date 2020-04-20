@@ -15,6 +15,7 @@ var VERSION = config.version;
 var ENV = process.env.NODE_ENV || 'development';
 var TWEETS_PATH = config.paths.tweets;
 var TRENDS_PATH = config.paths.trends;
+var PARALLEL_LIMIT = 5;
 var ARCHVIES_PATH = config.paths.archives;
 // helper functions
 var getDirectoriesForRange = function(srcpath, dateStart, dateEnd) {
@@ -78,34 +79,34 @@ var processDirectories = function(rootPath, paths = [], finish_cb) {
         var hoursPath = getDirectories(fullPathToRead);
         async.eachOfSeries(hoursPath, function(hourPath, index, async_cb_hoursPath) {
             var hourPathFiles = getFiles(path.join(fullPathToRead, hourPath), 'zip');
-            async.eachOfSeries(hourPathFiles, function(hourPathFile, index, async_cb_hoursPathFiles) {
+            async.eachOfLimit(hourPathFiles, PARALLEL_LIMIT, function(hourPathFile, index, async_cb_hoursPathFiles) {
                 var archiveExtract = new extractZip();
                 var zipFile = path.join(fullPathToRead, hourPath, hourPathFile);
                 var jsonFile = path.join(process.cwd(), 'tmp', hourPathFile.replace('.zip', '.json'));
                 var processingJsonLocation = datePath + '\\' + hourPath + '\\' + hourPathFile.replace('.zip', '.json');
                 var processingZipLocation = datePath + '\\' + hourPath + '\\' + hourPathFile;
-                console.log('Processing', processingJsonLocation, '...');
+                logger.info('Processing ' + processingJsonLocation + ' ...');
                 archiveExtract.extractFull(zipFile, 'tmp')
                 .then(function() {
-                    try {
-                        var jsonData = JSON.parse(fs.readFileSync(jsonFile, 'utf8'));
-                    } catch (e) {
-                        throw "json";
-                    }
-                    
-                    var meta = {
-                        date: datePath,
-                        hour: hourPath,
-                        minute: hourPathFile.split('_')[0].split('-')[1],
-                        fileName: jsonFile,
-                        length: jsonData.length,
-                        data: jsonData
-                    }
-                    console.log('Pushing - ', processingJsonLocation);
-                    fs.unlinkSync(jsonFile);
-                    adapter.pushBulk(meta, async_cb_hoursPathFiles);
-                    // return async_cb_hoursPathFiles();
-                    return;
+                    fs.readFile(jsonFile, 'utf8', (err, content) => {
+                        if (err) {
+                            throw "json";
+                        }
+
+                        var jsonData = JSON.parse(content);
+                        var meta = {
+                            date: datePath,
+                            hour: hourPath,
+                            minute: hourPathFile.split('_')[0].split('-')[1],
+                            fileName: jsonFile,
+                            length: jsonData.length,
+                            data: jsonData
+                        }
+                        logger.info('Pushing ' + processingJsonLocation);
+                        fs.unlinkSync(jsonFile);
+                        adapter.pushBulk(meta, async_cb_hoursPathFiles);
+                        return;
+                    });
                 })
                 .catch(function(err) {
                     var errMessage;
@@ -116,7 +117,7 @@ var processDirectories = function(rootPath, paths = [], finish_cb) {
                         err = err || 'Unzip error occurred';
                         errMessge = 'Error in file: ' + processingZipLocation + ' - Skipped: ' + err;
                     }
-                    console.log(errMessge);
+                    logger.error(errMessge);
                     processingErrors.push(errMessge);
                     // intentionally not raising error in async since we want to continue the process
                     return async_cb_hoursPathFiles();
@@ -132,11 +133,11 @@ var processDirectories = function(rootPath, paths = [], finish_cb) {
             finish_cb(processingErrors);
         } else {
             // no callback show the errors
-            console.log('Done');
-            console.log();
+            logTotalTime(Date.now() - startTime);
+            logger.info('Done');
             if (processingErrors.length > 0) {
-                console.log('Few errors occurred:');
-                console.log(processingErrors.join('\n'));
+                logger.error('Few errors occurred:');
+                logger.error(processingErrors.join('\n'));
             }
             process.exit();
         }
@@ -146,7 +147,7 @@ var processDirectories = function(rootPath, paths = [], finish_cb) {
 var processArchives = function(rootPath, archives = []) {
     var processingErrors = [];
     async.eachOfSeries(archives, function(archive, index, async_cb) {
-        console.log('Extracting', archive, 'to temp directory...');
+        logger.info('Extracting ' + archive + ' to temp directory...');
         var archiveExtract = new extractZip();
         var zipFile = path.join(rootPath, archive);
         // no need to validate the extracted date path since it was check before getting here
@@ -154,18 +155,18 @@ var processArchives = function(rootPath, archives = []) {
         var archiveTempPath = path.join('tmp', archiveDirectoryByDate );
         archiveExtract.extractFull(zipFile, 'tmp')
         .then(function() {
-            console.log('Processing', archive, '...');
+            logger.info('Processing ' + archive + ' ...');
             return processDirectories(process.cwd(), [archiveTempPath], function(processDirectoriesErrors) {
                 // delete the directory
                 if (processDirectoriesErrors && processDirectoriesErrors.length && processDirectoriesErrors.length > 0) {
                     processingErrors = processingErrors.concat(processDirectoriesErrors)
                 }
                 var deleteArchiveTempPath = path.join(process.cwd(), archiveTempPath);
-                console.log('Deleting temp directory for ', deleteArchiveTempPath);
+                logger.info('Deleting temp directory for ' + deleteArchiveTempPath);
                 rimraf(deleteArchiveTempPath, function(err) {
                     if (err) {
                         var errMessage = 'Error deleting temp directory ' + deleteArchiveTempPath;
-                        console.log(errMessage);
+                        logger.error(errMessage);
                         processingErrors.push(errMessage);
                     }
                 });
@@ -174,17 +175,18 @@ var processArchives = function(rootPath, archives = []) {
         })
         .catch(function err(err) {
             var errMessge = 'Error in ' + processingLocation + ' - Skipped: ' + err;
-            console.log(errMessge);
+            logger.error(errMessge);
             processingErrors.push(processingLocation);
             return async_cb();
         });
     }, function () {
+        logTotalTime(Date.now() - startTime);
         if (processingErrors.length > 0) {
-            console.log('Few errors occurred:');
-            console.log(processingErrors.join('\n'));
-            console.log('Done');
+            logger.error('Few errors occurred:');
+            logger.error(processingErrors.join('\n'));
+            logger.error('Done');
         } else {
-            console.log('Done');
+            logger.info('Done');
         }
         process.exit();
     });
@@ -212,6 +214,7 @@ if (actionType === 'tweets') {
 } else if (actionType === 'archives') {
     rootPath = ARCHVIES_PATH;
 } else {
+    // not errors but use this to show usage
     errors.push('Usage Examples:');
     errors.push('Where <adapter> is a javacript adapter file name (with no .js extension)');
     errors.push('Reading tweets date path: node archiveReader.js tweets <adapter> 17-01-2017');
@@ -236,7 +239,23 @@ if (!adapterName) {
 if (!fs.existsSync(path.join(process.cwd(), 'adapters',adapterName + '.js'))) {
     errorExit('Adapter ' + adapterName + ' doesn\'t exist');
 }
-var adapter = require('../adapters/' + adapterName + '.js')();
+
+var logger = {
+    info: function(logLine) {
+        console.log(moment().format("DD-MM-YYYY HH:mm:ss") + ' > ' + logLine )
+    },
+    error: function(logLine) {
+        console.log(moment().format("DD-MM-YYYY HH:mm:ss") + ' [Error] > ' + logLine )
+    }
+}
+
+var startTime;
+
+var logTotalTime = function(totalTime) {
+    logger.info('Total processing time: ' + moment.unix(totalTime / 1000).utc().format('H [hours,] m [minutes and] s [seconds]'));
+}
+
+var adapter = require('../adapters/' + adapterName + '.js')(logger); // adding logger here
 if (adapter.init) {
     adapter.init(function() {});
 }
@@ -277,6 +296,7 @@ if (actionType === 'tweets') {
         errorExit('No directories were found to read');
     }
     paths = sortByDate(paths);
+    startTime = Date.now();
     processDirectories(rootPath, paths);
 } else if (actionType === 'archives') {
     var archiveFiles = paths;
@@ -289,19 +309,21 @@ if (actionType === 'tweets') {
         }
     }
     archiveFiles = sortByDate(archiveFiles);
+    startTime = Date.now();
     // now for each archive we need to extract is and process its directory
     processArchives(rootPath, archiveFiles);
 }
 
 var terminateAR = function() {
     // call teardown of adapters if exists
+    logTotalTime(Date.now() - startTime);
     if (adapter.teardown) {
         adapter.teardown(function() {
-            console.log('TwitArk Archive Reader STOP');
+            logger.info('TwitArk Archive Reader STOP');
             process.exit(0);
         });
     } else {
-        console.log('TwitArk Archive Reader STOP');
+        logger.info('TwitArk Archive Reader STOP');
         process.exit(0);
     }
 };
