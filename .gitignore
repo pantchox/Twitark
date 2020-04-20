@@ -1,8 +1,12 @@
 node_modules
 .vscode
 .idea
+package-lock.json
 logs
 tweets
 trends
 archives
 tmp
+config/development.config.js
+config/production.config.js
+config/followIds.json
